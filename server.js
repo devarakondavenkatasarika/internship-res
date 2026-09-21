@@ -2,10 +2,13 @@ const express = require("express");
 const Database = require("better-sqlite3");
 
 const app = express();
+
 app.use(express.json());
 
+// SQLite database
 const db = new Database("internships.db");
 
+// Create tables
 db.exec(`
 CREATE TABLE IF NOT EXISTS internships (
     id TEXT PRIMARY KEY,
@@ -27,6 +30,7 @@ CREATE TABLE IF NOT EXISTS applications (
 );
 `);
 
+// Home
 app.get("/", (req, res) => {
     res.json({
         status: "success",
@@ -34,18 +38,24 @@ app.get("/", (req, res) => {
     });
 });
 
+// Get internships with pagination
 app.get("/api/internships", (req, res) => {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 5;
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 5, 1), 50);
     const offset = (page - 1) * limit;
 
-    const data = db.prepare(
+    const rows = db.prepare(
         "SELECT * FROM internships LIMIT ? OFFSET ?"
     ).all(limit, offset);
 
     const total = db.prepare(
         "SELECT COUNT(*) AS count FROM internships"
     ).get().count;
+
+    const data = rows.map(row => ({
+        ...row,
+        skills: JSON.parse(row.skills)
+    }));
 
     res.json({
         status: "success",
@@ -59,6 +69,40 @@ app.get("/api/internships", (req, res) => {
     });
 });
 
+// Search/filter internships
+app.get("/api/internships/search", (req, res) => {
+    const { domain, mode } = req.query;
+
+    let query = "SELECT * FROM internships WHERE 1=1";
+    const params = [];
+
+    if (domain) {
+        query += " AND domain = ?";
+        params.push(domain);
+    }
+
+    if (mode) {
+        query += " AND mode = ?";
+        params.push(mode);
+    }
+
+    const rows = db.prepare(query).all(...params);
+
+    const data = rows.map(row => ({
+        ...row,
+        skills: JSON.parse(row.skills)
+    }));
+
+    res.json({
+        status: "success",
+        data,
+        pagination: {
+            total: data.length
+        }
+    });
+});
+
+// Create internship
 app.post("/api/internships", (req, res) => {
     const {
         id,
@@ -70,10 +114,24 @@ app.post("/api/internships", (req, res) => {
         openings
     } = req.body;
 
-    if (!id || !title || !domain || !mode || !location || !skills) {
+    if (
+        !id ||
+        !title ||
+        !domain ||
+        !mode ||
+        !location ||
+        !Array.isArray(skills)
+    ) {
         return res.status(400).json({
             status: "error",
-            message: "Required fields are missing"
+            message: "Required fields are missing or invalid"
+        });
+    }
+
+    if (!Number.isInteger(openings) || openings < 1) {
+        return res.status(400).json({
+            status: "error",
+            message: "Openings must be a positive number"
         });
     }
 
@@ -89,7 +147,7 @@ app.post("/api/internships", (req, res) => {
             mode,
             location,
             JSON.stringify(skills),
-            openings || 1
+            openings
         );
 
         res.status(201).json({
@@ -97,7 +155,7 @@ app.post("/api/internships", (req, res) => {
             message: "Internship created"
         });
 
-    } catch {
+    } catch (error) {
         res.status(409).json({
             status: "error",
             message: "Internship ID already exists"
@@ -105,6 +163,7 @@ app.post("/api/internships", (req, res) => {
     }
 });
 
+// Submit application
 app.post("/api/applications", (req, res) => {
     const {
         internship_id,
@@ -113,10 +172,10 @@ app.post("/api/applications", (req, res) => {
         portfolio_url
     } = req.body;
 
-    if (!name || !email || !internship_id) {
+    if (!internship_id || !name || !email) {
         return res.status(400).json({
             status: "error",
-            message: "Name, email and internship ID are required"
+            message: "Internship ID, name and email are required"
         });
     }
 
@@ -124,9 +183,37 @@ app.post("/api/applications", (req, res) => {
 
     if (!emailPattern.test(email)) {
         return res.status(400).json({
-            status: "error",
+            status: "400",
             message: "Invalid email address"
         });
+    }
+
+    // Check internship exists
+    const internship = db.prepare(
+        "SELECT id FROM internships WHERE id = ?"
+    ).get(internship_id);
+
+    if (!internship) {
+        return res.status(404).json({
+            status: "error",
+            message: "Internship not found"
+        });
+    }
+
+    // Validate portfolio URL if provided
+    if (portfolio_url) {
+        try {
+            const url = new URL(portfolio_url);
+
+            if (!["http:", "https:"].includes(url.protocol)) {
+                throw new Error();
+            }
+        } catch {
+            return res.status(400).json({
+                status: "error",
+                message: "Invalid portfolio URL"
+            });
+        }
     }
 
     try {
@@ -146,7 +233,7 @@ app.post("/api/applications", (req, res) => {
             message: "Application submitted"
         });
 
-    } catch {
+    } catch (error) {
         res.status(409).json({
             status: "error",
             message: "Duplicate application"
@@ -154,8 +241,9 @@ app.post("/api/applications", (req, res) => {
     }
 });
 
+// Start server
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
 });
