@@ -1,1 +1,13 @@
-
+{
+  "name": "internship-rest-api",
+  "version": "1.0.0",
+  "description": "REST API for internship records using Node.js, Express and SQLite",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "better-sqlite3": "^12.4.1"
+  }
+}
