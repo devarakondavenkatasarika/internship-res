@@ -51,3 +51,8 @@ POST `/api/applications`
 npm install
 npm run seed
 npm start
+## Testing
+
+The API was tested successfully using GitHub Actions.
+
+![API Test Success](api-test-success.png)
