@@ -4,7 +4,8 @@
   "description": "REST API for internship records using Node.js, Express and SQLite",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "seed": "node seed.js"
   },
   "dependencies": {
     "express": "^5.1.0",
