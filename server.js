@@ -2,13 +2,10 @@ const express = require("express");
 const Database = require("better-sqlite3");
 
 const app = express();
-
 app.use(express.json());
 
-// SQLite database
 const db = new Database("internships.db");
 
-// Create tables
 db.exec(`
 CREATE TABLE IF NOT EXISTS internships (
     id TEXT PRIMARY KEY,
@@ -19,16 +16,32 @@ CREATE TABLE IF NOT EXISTS internships (
     skills TEXT NOT NULL,
     openings INTEGER NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS applications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    internship_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL,
-    portfolio_url TEXT,
-    UNIQUE(internship_id, email)
-);
 `);
+
+function formatInternship(row) {
+    return {
+        ...row,
+        skills: JSON.parse(row.skills)
+    };
+}
+
+function validateInternship(data) {
+    const { id, title, domain, mode, location, skills, openings } = data;
+
+    if (!id || !title || !domain || !mode || !location) {
+        return "Required fields are missing";
+    }
+
+    if (!Array.isArray(skills)) {
+        return "Skills must be an array";
+    }
+
+    if (!Number.isInteger(openings) || openings < 1) {
+        return "Openings must be a positive integer";
+    }
+
+    return null;
+}
 
 // Home
 app.get("/", (req, res) => {
@@ -38,10 +51,10 @@ app.get("/", (req, res) => {
     });
 });
 
-// Get internships with pagination
+// LIST internships with pagination
 app.get("/api/internships", (req, res) => {
-    const page = Math.max(Number(req.query.page) || 1, 1);
-    const limit = Math.min(Math.max(Number(req.query.limit) || 5, 1), 50);
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 5, 1), 50);
     const offset = (page - 1) * limit;
 
     const rows = db.prepare(
@@ -52,14 +65,9 @@ app.get("/api/internships", (req, res) => {
         "SELECT COUNT(*) AS count FROM internships"
     ).get().count;
 
-    const data = rows.map(row => ({
-        ...row,
-        skills: JSON.parse(row.skills)
-    }));
-
     res.json({
         status: "success",
-        data,
+        data: rows.map(formatInternship),
         pagination: {
             page,
             limit,
@@ -69,41 +77,36 @@ app.get("/api/internships", (req, res) => {
     });
 });
 
-// Search/filter internships
-app.get("/api/internships/search", (req, res) => {
-    const { domain, mode } = req.query;
+// DETAIL internship
+app.get("/api/internships/:id", (req, res) => {
+    const internship = db.prepare(
+        "SELECT * FROM internships WHERE id = ?"
+    ).get(req.params.id);
 
-    let query = "SELECT * FROM internships WHERE 1=1";
-    const params = [];
-
-    if (domain) {
-        query += " AND domain = ?";
-        params.push(domain);
+    if (!internship) {
+        return res.status(404).json({
+            status: "error",
+            message: "Internship not found"
+        });
     }
-
-    if (mode) {
-        query += " AND mode = ?";
-        params.push(mode);
-    }
-
-    const rows = db.prepare(query).all(...params);
-
-    const data = rows.map(row => ({
-        ...row,
-        skills: JSON.parse(row.skills)
-    }));
 
     res.json({
         status: "success",
-        data,
-        pagination: {
-            total: data.length
-        }
+        data: formatInternship(internship)
     });
 });
 
-// Create internship
+// CREATE internship
 app.post("/api/internships", (req, res) => {
+    const error = validateInternship(req.body);
+
+    if (error) {
+        return res.status(400).json({
+            status: "error",
+            message: error
+        });
+    }
+
     const {
         id,
         title,
@@ -113,27 +116,6 @@ app.post("/api/internships", (req, res) => {
         skills,
         openings
     } = req.body;
-
-    if (
-        !id ||
-        !title ||
-        !domain ||
-        !mode ||
-        !location ||
-        !Array.isArray(skills)
-    ) {
-        return res.status(400).json({
-            status: "error",
-            message: "Required fields are missing or invalid"
-        });
-    }
-
-    if (!Number.isInteger(openings) || openings < 1) {
-        return res.status(400).json({
-            status: "error",
-            message: "Openings must be a positive number"
-        });
-    }
 
     try {
         db.prepare(`
@@ -163,85 +145,110 @@ app.post("/api/internships", (req, res) => {
     }
 });
 
-// Submit application
-app.post("/api/applications", (req, res) => {
+// UPDATE internship
+app.put("/api/internships/:id", (req, res) => {
     const {
-        internship_id,
-        name,
-        email,
-        portfolio_url
+        title,
+        domain,
+        mode,
+        location,
+        skills,
+        openings
     } = req.body;
 
-    if (!internship_id || !name || !email) {
+    if (!title || !domain || !mode || !location) {
         return res.status(400).json({
             status: "error",
-            message: "Internship ID, name and email are required"
+            message: "Required fields are missing"
         });
     }
 
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!emailPattern.test(email)) {
+    if (!Array.isArray(skills)) {
         return res.status(400).json({
-            status: "400",
-            message: "Invalid email address"
+            status: "error",
+            message: "Skills must be an array"
         });
     }
 
-    // Check internship exists
-    const internship = db.prepare(
-        "SELECT id FROM internships WHERE id = ?"
-    ).get(internship_id);
+    if (!Number.isInteger(openings) || openings < 1) {
+        return res.status(400).json({
+            status: "error",
+            message: "Openings must be a positive integer"
+        });
+    }
 
-    if (!internship) {
+    const result = db.prepare(`
+        UPDATE internships
+        SET title = ?, domain = ?, mode = ?, location = ?,
+            skills = ?, openings = ?
+        WHERE id = ?
+    `).run(
+        title,
+        domain,
+        mode,
+        location,
+        JSON.stringify(skills),
+        openings,
+        req.params.id
+    );
+
+    if (result.changes === 0) {
         return res.status(404).json({
             status: "error",
             message: "Internship not found"
         });
     }
 
-    // Validate portfolio URL if provided
-    if (portfolio_url) {
-        try {
-            const url = new URL(portfolio_url);
-
-            if (!["http:", "https:"].includes(url.protocol)) {
-                throw new Error();
-            }
-        } catch {
-            return res.status(400).json({
-                status: "error",
-                message: "Invalid portfolio URL"
-            });
-        }
-    }
-
-    try {
-        db.prepare(`
-            INSERT INTO applications
-            (internship_id, name, email, portfolio_url)
-            VALUES (?, ?, ?, ?)
-        `).run(
-            internship_id,
-            name,
-            email,
-            portfolio_url || null
-        );
-
-        res.status(201).json({
-            status: "success",
-            message: "Application submitted"
-        });
-
-    } catch (error) {
-        res.status(409).json({
-            status: "error",
-            message: "Duplicate application"
-        });
-    }
+    res.json({
+        status: "success",
+        message: "Internship updated"
+    });
 });
 
-// Start server
+// DELETE internship
+app.delete("/api/internships/:id", (req, res) => {
+    const result = db.prepare(
+        "DELETE FROM internships WHERE id = ?"
+    ).run(req.params.id);
+
+    if (result.changes === 0) {
+        return res.status(404).json({
+            status: "error",
+            message: "Internship not found"
+        });
+    }
+
+    res.json({
+        status: "success",
+        message: "Internship deleted"
+    });
+});
+
+// SEARCH / FILTER
+app.get("/api/internships/search", (req, res) => {
+    const { domain, mode } = req.query;
+
+    let query = "SELECT * FROM internships WHERE 1=1";
+    const params = [];
+
+    if (domain) {
+        query += " AND domain = ?";
+        params.push(domain);
+    }
+
+    if (mode) {
+        query += " AND mode = ?";
+        params.push(mode);
+    }
+
+    const rows = db.prepare(query).all(...params);
+
+    res.json({
+        status: "success",
+        data: rows.map(formatInternship)
+    });
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
