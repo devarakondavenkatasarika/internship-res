@@ -30,5 +30,29 @@ jobs:
 
       - name: Test API
         run: |
-          curl http://localhost:3000
-          curl http://localhost:3000/api/internships
+          echo "Testing Home API..."
+          curl -f http://localhost:3000
+
+          echo "Testing GET all internships..."
+          curl -f http://localhost:3000/api/internships
+
+          echo "Testing Pagination..."
+          curl -f "http://localhost:3000/api/internships?page=1&limit=5"
+
+          echo "Testing POST - Create internship..."
+          curl -f -X POST http://localhost:3000/api/internships \
+            -H "Content-Type: application/json" \
+            -d '{"id":"TEST-999","title":"Test Intern","domain":"Full Stack Development","mode":"Remote","location":"India","skills":["Node.js","Express","SQL"],"openings":1}'
+
+          echo "Testing GET by ID..."
+          curl -f http://localhost:3000/api/internships/TEST-999
+
+          echo "Testing PUT - Update internship..."
+          curl -f -X PUT http://localhost:3000/api/internships/TEST-999 \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Updated Test Intern","domain":"Full Stack Development","mode":"Hybrid","location":"India","skills":["Node.js","Express","SQL"],"openings":2}'
+
+          echo "Testing DELETE..."
+          curl -f -X DELETE http://localhost:3000/api/internships/TEST-999
+
+          echo "All API tests completed successfully!"
